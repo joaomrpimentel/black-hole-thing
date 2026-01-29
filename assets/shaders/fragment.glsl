@@ -175,7 +175,7 @@ vec3 getStars(vec3 rd) {
     return col;
 }
 
-// Sample the accretion disk with 3D turbulence
+// Sample the accretion disk with 3D turbulence and relativistic beaming
 vec3 sampleDisk(vec3 pos, float distToCenter) {
     if (distToCenter < u_DiskInnerRadius || distToCenter > u_DiskOuterRadius) {
         return vec3(0.0);
@@ -188,7 +188,6 @@ vec3 sampleDisk(vec3 pos, float distToCenter) {
     float angle = atan(pos.z, pos.x);
     
     // 3D Turbulence: create animated gaseous streaks
-    // The noise samples a 3D volume that rotates with time, creating swirling motion
     float rotationSpeed = 0.3;
     float noiseScale = 2.5;
     vec3 noisePos = vec3(
@@ -210,20 +209,60 @@ vec3 sampleDisk(vec3 pos, float distToCenter) {
     float temperature = 1.0 - t;
     temperature = pow(temperature, 0.5);
     
-    // Color based on temperature
-    vec3 color = mix(u_DiskColor2, u_DiskColor1, temperature);
+    // Base color from temperature
+    vec3 baseColor = mix(u_DiskColor2, u_DiskColor1, temperature);
+    
+    // ========================================
+    // RELATIVISTIC DOPPLER BEAMING
+    // ========================================
+    // The disk rotates counter-clockwise when viewed from above.
+    // Orbital velocity direction is tangent to the circle at each point.
+    // v_orbital = (-sin(angle), 0, cos(angle)) * orbitalSpeed
+    
+    // Orbital speed (fraction of c, higher near black hole)
+    float orbitalSpeed = 0.4 * (1.0 - t * 0.5); // Faster near inner edge
+    
+    // Tangent direction (perpendicular to radial, in XZ plane)
+    vec3 tangent = normalize(vec3(-sin(angle), 0.0, cos(angle)));
+    vec3 velocity = tangent * orbitalSpeed;
+    
+    // View direction from disk point to camera (simplified: assume camera is at +Z)
+    // In reality we'd pass camera position, but this approximation works for the effect
+    vec3 viewDir = normalize(vec3(0.0, sin(u_CameraAngle), cos(u_CameraAngle)));
+    
+    // Doppler factor: how much the velocity component is toward/away from camera
+    // Positive = approaching (blueshift), Negative = receding (redshift)
+    float dopplerFactor = dot(velocity, viewDir);
+    
+    // Relativistic beaming intensity boost (simplified relativistic formula)
+    // I' = I * D^3, where D is the Doppler factor
+    // For visual effect, we use a softer power
+    float beamingExponent = 3.0;
+    float beaming = pow(1.0 + dopplerFactor * 2.0, beamingExponent);
+    beaming = clamp(beaming, 0.1, 5.0);
+    
+    // Color shift: blueshift for approaching, redshift for receding
+    vec3 color = baseColor;
+    
+    // Shift toward blue (higher temperature colors) when approaching
+    if (dopplerFactor > 0.0) {
+        // Approaching: shift toward white/blue
+        vec3 blueShift = vec3(0.8, 0.9, 1.0);
+        color = mix(color, color * blueShift * 1.5, dopplerFactor * 1.5);
+    } else {
+        // Receding: shift toward red/orange
+        vec3 redShift = vec3(1.2, 0.6, 0.3);
+        color = mix(color, color * redShift * 0.7, abs(dopplerFactor) * 1.2);
+    }
     
     // Add turbulent variation to color
     color *= 0.4 + 0.6 * diskNoise;
     
-    // Brightness falls off with radius, modulated by turbulence
+    // Brightness with beaming applied
     float brightness = (1.0 - t) * (0.2 + 0.8 * diskNoise);
+    brightness *= beaming;
     
-    // Doppler effect (simplified - will be enhanced in next commit)
-    float doppler = 0.5 + 0.5 * sin(angle + u_Time * 0.5);
-    brightness *= 0.7 + 0.3 * doppler;
-    
-    return color * brightness * 2.5;
+    return color * brightness * 2.0;
 }
 
 void main() {
