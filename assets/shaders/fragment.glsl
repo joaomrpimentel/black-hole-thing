@@ -357,11 +357,6 @@ void main() {
         color += vec3(1.0, 0.9, 0.7) * photonRing * u_GlowIntensity;
     }
     
-    // Tone mapping
-    color = color / (color + vec3(1.0));
-    
-    // Gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
-    
+    // Output HDR values - tone mapping and gamma done in post-processing
     FragColor = vec4(color, 1.0);
 }
