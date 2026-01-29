@@ -18,8 +18,8 @@ uniform float u_CameraAngle;
 
 // Constants
 const float PI = 3.14159265359;
-const float SCHWARZSCHILD_FACTOR = 1.5; // How much gravity bends light
-const int MAX_STEPS = 200;
+const float SCHWARZSCHILD_FACTOR = 3.0; // Increased for more dramatic light bending
+const int MAX_STEPS = 300; // More steps for smoother curves
 const float MAX_DIST = 100.0;
 const float EPSILON = 0.001;
 
@@ -146,31 +146,42 @@ vec3 rotateX(vec3 v, float angle) {
     return vec3(v.x, c * v.y - s * v.z, s * v.y + c * v.z);
 }
 
-// Starfield background
-vec3 getStars(vec3 rd) {
+// Starfield background with lensing-aware stretching
+vec3 getStars(vec3 rd, float lensingAmount) {
     vec3 col = vec3(0.0);
     
+    // Stretch factor based on how much lensing occurred
+    float stretch = 1.0 + lensingAmount * 3.0;
+    
     // Multiple layers of stars
-    for (int i = 0; i < 3; i++) {
-        vec3 p = rd * (50.0 + float(i) * 30.0);
-        vec2 id = floor(p.xy + p.z);
+    for (int i = 0; i < 4; i++) {
+        float layerDist = 50.0 + float(i) * 40.0;
+        vec3 p = rd * layerDist;
+        
+        // Apply stretching perpendicular to the view direction
+        vec2 id = floor(p.xy * vec2(1.0, 1.0 / stretch) + p.z);
         float star = hash(id);
         
-        if (star > 0.97) {
-            float brightness = pow(star - 0.97, 0.5) * 30.0;
-            vec3 starPos = vec3(fract(p.xy + p.z) - 0.5, 0.0);
-            float d = length(starPos.xy);
-            brightness *= smoothstep(0.05, 0.0, d);
+        if (star > 0.96) {
+            float brightness = pow(star - 0.96, 0.4) * 40.0;
+            
+            // Star position with stretch
+            vec2 starUV = fract(p.xy * vec2(1.0, 1.0 / stretch) + p.z) - 0.5;
+            
+            // Elongate stars based on lensing
+            float starSize = 0.03 + lensingAmount * 0.15;
+            float d = length(starUV * vec2(1.0, stretch));
+            brightness *= smoothstep(starSize, 0.0, d);
             
             // Star color variation
-            vec3 starColor = mix(vec3(1.0, 0.9, 0.8), vec3(0.8, 0.9, 1.0), hash(id + 0.5));
+            vec3 starColor = mix(vec3(1.0, 0.95, 0.9), vec3(0.9, 0.95, 1.0), hash(id + 0.5));
             col += starColor * brightness;
         }
     }
     
     // Subtle nebula
-    float nebula = fbm(rd.xy * 3.0 + rd.z * 2.0) * 0.15;
-    col += vec3(0.1, 0.05, 0.15) * nebula;
+    float nebula = fbm(rd.xy * 3.0 + rd.z * 2.0) * 0.1;
+    col += vec3(0.08, 0.04, 0.12) * nebula;
     
     return col;
 }
@@ -187,23 +198,31 @@ vec3 sampleDisk(vec3 pos, float distToCenter) {
     // Disk angle for animation
     float angle = atan(pos.z, pos.x);
     
-    // 3D Turbulence: create animated gaseous streaks
-    float rotationSpeed = 0.3;
-    float noiseScale = 2.5;
-    vec3 noisePos = vec3(
-        cos(angle) * distToCenter * noiseScale,
-        sin(angle) * distToCenter * noiseScale,
-        u_Time * rotationSpeed + distToCenter * 0.5
+    // Fast-flowing gas streaks along orbital direction
+    // Use angle-based coordinate to create tangential flow
+    float orbitalPhase = angle * 8.0 - u_Time * 2.0; // Fast rotation
+    float radialCoord = distToCenter * 3.0;
+    
+    // Directional noise: stretched along orbital direction
+    vec3 flowPos = vec3(
+        orbitalPhase,
+        radialCoord,
+        u_Time * 0.5 + distToCenter * 0.3
     );
     
-    // Multi-octave turbulence for fine detail
-    float turb = turbulence3D(noisePos, 5);
+    // Primary flow turbulence - stretched in flow direction
+    float flowNoise = snoise(flowPos * vec3(0.3, 1.0, 1.0));
+    flowNoise = 0.5 + 0.5 * flowNoise;
     
-    // Add high-frequency streaks (like gas jets)
-    float streaks = snoise(noisePos * 3.0 + vec3(u_Time * 0.5, 0.0, 0.0));
-    streaks = pow(abs(streaks), 0.5) * 0.5;
+    // Add fine detail streaks
+    float fineStreaks = snoise(flowPos * vec3(0.5, 2.0, 1.5) + vec3(u_Time * 0.8, 0.0, 0.0));
+    fineStreaks = pow(abs(fineStreaks), 0.3);
     
-    float diskNoise = turb + streaks;
+    // Swirling vortices at random intervals
+    float vortex = snoise(vec3(angle * 2.0 + u_Time * 0.3, distToCenter * 1.5, u_Time * 0.2));
+    vortex = pow(abs(vortex), 2.0) * 0.5;
+    
+    float diskNoise = flowNoise * 0.6 + fineStreaks * 0.3 + vortex * 0.1;
     
     // Temperature gradient (hotter near center)
     float temperature = 1.0 - t;
@@ -285,11 +304,13 @@ void main() {
     // Ray marching with gravitational lensing
     vec3 pos = ro;
     vec3 vel = rd;
+    vec3 initialDir = rd;
     
     vec3 color = vec3(0.0);
     float totalDist = 0.0;
     bool hitDisk = false;
     bool hitHorizon = false;
+    float accumulatedLensing = 0.0; // Track how much the ray bent
     
     float prevY = pos.y;
     
@@ -307,14 +328,20 @@ void main() {
             break;
         }
         
-        // Gravitational deflection (simplified Schwarzschild)
+        // Gravitational deflection (enhanced Schwarzschild)
         vec3 toCenter = -normalize(pos);
         float gravity = u_BlackHoleRadius * SCHWARZSCHILD_FACTOR / (distToCenter * distToCenter);
-        vel = normalize(vel + toCenter * gravity * 0.1);
         
-        // Step size (smaller near black hole)
-        float stepSize = max(0.01, (distToCenter - u_BlackHoleRadius) * 0.1);
-        stepSize = min(stepSize, 0.5);
+        // Stronger integration for more dramatic bending
+        vec3 oldVel = vel;
+        vel = normalize(vel + toCenter * gravity * 0.15);
+        
+        // Accumulate lensing (angle change)
+        accumulatedLensing += 1.0 - dot(oldVel, vel);
+        
+        // Step size (smaller near black hole for accuracy)
+        float stepSize = max(0.005, (distToCenter - u_BlackHoleRadius) * 0.08);
+        stepSize = min(stepSize, 0.4);
         
         vec3 newPos = pos + vel * stepSize;
         float newY = newPos.y;
@@ -338,9 +365,12 @@ void main() {
         totalDist += stepSize;
     }
     
+    // Compute final lensing amount for star stretching
+    float lensingAmount = clamp(accumulatedLensing * 10.0, 0.0, 1.0);
+    
     // Background (stars) if we didn't hit the event horizon
     if (!hitHorizon) {
-        color += getStars(vel);
+        color += getStars(vel, lensingAmount);
     }
     
     // Glow around black hole
