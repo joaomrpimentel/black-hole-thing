@@ -1,6 +1,6 @@
 # Defaults
 BUILD_DIR = build
-EXECUTABLE = $(BUILD_DIR)/BlackHoleVis
+EXECUTABLE = $(BUILD_DIR)/BlackHoleThing
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release
 
 # Detect number of processors for parallel build
@@ -12,7 +12,7 @@ all: build
 
 # Generate build system using CMake
 configure:
-	cmake -B $(BUILD_DIR) -S . $(CMAKE_FLAGS)
+	cmake -B $(BUILD_DIR) -S . $(CMAKE_FLAGS) -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # Compile the project
 build:
