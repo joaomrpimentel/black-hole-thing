@@ -1,3 +1,8 @@
+/*
+ * Bloom Composite Shader
+ * Final pass: combines the original HDR scene with the blurred bloom,
+ * then applies exposure-based tone mapping and gamma correction.
+ */
 #version 330 core
 out vec4 FragColor;
 
@@ -12,13 +17,12 @@ void main() {
     vec3 scene = texture(u_Scene, TexCoord).rgb;
     vec3 bloom = texture(u_Bloom, TexCoord).rgb;
     
-    // Additive blend
     vec3 color = scene + bloom * u_BloomStrength;
     
-    // Exposure tone mapping
+    // Tone mapping: HDR to LDR using exposure
     color = vec3(1.0) - exp(-color * u_Exposure);
     
-    // Gamma correction
+    // Gamma correction for display
     color = pow(color, vec3(1.0 / 2.2));
     
     FragColor = vec4(color, 1.0);

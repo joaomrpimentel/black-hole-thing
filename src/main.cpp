@@ -18,11 +18,9 @@
 #include <string>
 #include <vector>
 
-// Window dimensions
 int SCR_WIDTH = 1280;
 int SCR_HEIGHT = 720;
 
-// Shader parameters
 struct BlackHoleParams {
   float radius = 0.5f;
   float diskInnerRadius = 1.0f;
@@ -31,11 +29,17 @@ struct BlackHoleParams {
   glm::vec3 diskColor1 = glm::vec3(1.0f, 0.6f, 0.1f);
   glm::vec3 diskColor2 = glm::vec3(0.8f, 0.2f, 0.05f);
   float glowIntensity = 1.0f;
+  float diskSpeed = 2.0f;
   float cameraDistance = 10.0f;
   float cameraAngle = 0.5f;
 } params;
 
-// Bloom parameters
+bool showFPS = false;
+float fps = 0.0f;
+float frameTime = 0.0f;
+float lastFrameTime = 0.0f;
+float diskPhase = 0.0f;
+
 struct BloomParams {
   float threshold = 0.8f;
   float intensity = 1.0f;
@@ -44,7 +48,6 @@ struct BloomParams {
   bool enabled = true;
 } bloomParams;
 
-// Framebuffer objects for bloom
 struct BloomFBO {
   unsigned int sceneFBO, sceneTexture;
   unsigned int brightFBO, brightTexture;
@@ -52,7 +55,6 @@ struct BloomFBO {
 };
 BloomFBO bloomFBO;
 
-// Function prototypes
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void processInput(GLFWwindow *window);
 void saveScreenshot(int width, int height);
@@ -61,7 +63,6 @@ void resizeBloomFBOs(int width, int height);
 void deleteBloomFBOs();
 
 void initBloomFBOs(int width, int height) {
-  // Scene FBO (HDR)
   glGenFramebuffers(1, &bloomFBO.sceneFBO);
   glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO.sceneFBO);
   glGenTextures(1, &bloomFBO.sceneTexture);
@@ -75,7 +76,6 @@ void initBloomFBOs(int width, int height) {
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                          bloomFBO.sceneTexture, 0);
 
-  // Brightness extraction FBO
   glGenFramebuffers(1, &bloomFBO.brightFBO);
   glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO.brightFBO);
   glGenTextures(1, &bloomFBO.brightTexture);
@@ -89,7 +89,6 @@ void initBloomFBOs(int width, int height) {
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                          bloomFBO.brightTexture, 0);
 
-  // Ping-pong FBOs for blur
   glGenFramebuffers(2, bloomFBO.pingpongFBO);
   glGenTextures(2, bloomFBO.pingpongTextures);
   for (int i = 0; i < 2; i++) {
@@ -162,7 +161,6 @@ int main() {
 
   glEnable(GL_MULTISAMPLE);
 
-  // Initialize ImGui
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO &io = ImGui::GetIO();
@@ -175,7 +173,6 @@ int main() {
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 330");
 
-  // Create fullscreen quad
   float quadVertices[] = {-1.0f, 1.0f,  0.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f,
                           1.0f,  -1.0f, 1.0f, 0.0f, -1.0f, 1.0f,  0.0f, 1.0f,
                           1.0f,  -1.0f, 1.0f, 0.0f, 1.0f,  1.0f,  1.0f, 1.0f};
@@ -193,7 +190,6 @@ int main() {
                         (void *)(2 * sizeof(float)));
   glEnableVertexAttribArray(1);
 
-  // Load shaders
   Shader blackHoleShader("assets/shaders/vertex.glsl",
                          "assets/shaders/fragment.glsl");
   Shader bloomExtractShader("assets/shaders/vertex.glsl",
@@ -203,18 +199,22 @@ int main() {
   Shader bloomCompositeShader("assets/shaders/vertex.glsl",
                               "assets/shaders/bloom_composite.glsl");
 
-  // Initialize bloom FBOs
   initBloomFBOs(SCR_WIDTH, SCR_HEIGHT);
 
-  // Main loop
   while (!glfwWindowShouldClose(window)) {
+    float currentTime = (float)glfwGetTime();
+    frameTime = currentTime - lastFrameTime;
+    lastFrameTime = currentTime;
+    fps = 1.0f / frameTime;
+
+    diskPhase += frameTime * params.diskSpeed;
+
     processInput(window);
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // Control Panel
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
     ImGui::Begin("Black Hole Controls", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize);
@@ -227,6 +227,7 @@ int main() {
     ImGui::SliderFloat("Inner Radius", &params.diskInnerRadius, 0.5f, 3.0f);
     ImGui::SliderFloat("Outer Radius", &params.diskOuterRadius, 2.0f, 8.0f);
     ImGui::SliderFloat("Thickness", &params.diskThickness, 0.05f, 1.0f);
+    ImGui::SliderFloat("Speed", &params.diskSpeed, 0.0f, 10.0f);
     ImGui::ColorEdit3("Hot Color", &params.diskColor1[0]);
     ImGui::ColorEdit3("Cool Color", &params.diskColor2[0]);
 
@@ -242,6 +243,12 @@ int main() {
     ImGui::SliderFloat("Exposure", &bloomParams.exposure, 0.5f, 3.0f);
 
     ImGui::Separator();
+    ImGui::Checkbox("Show FPS", &showFPS);
+    if (showFPS) {
+      ImGui::Text("FPS: %.1f (%.2f ms)", fps, frameTime * 1000.0f);
+    }
+
+    ImGui::Separator();
     if (ImGui::Button("Export Image (1920x1080)", ImVec2(-1, 40))) {
       saveScreenshot(1920, 1080);
     }
@@ -251,7 +258,7 @@ int main() {
 
     ImGui::End();
 
-    // === PASS 1: Render scene to HDR FBO ===
+    // Pass 1: Scene to HDR FBO
     glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO.sceneFBO);
     glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -267,6 +274,7 @@ int main() {
     blackHoleShader.setVec3("u_DiskColor1", params.diskColor1);
     blackHoleShader.setVec3("u_DiskColor2", params.diskColor2);
     blackHoleShader.setFloat("u_GlowIntensity", params.glowIntensity);
+    blackHoleShader.setFloat("u_DiskPhase", diskPhase);
     blackHoleShader.setFloat("u_CameraDistance", params.cameraDistance);
     blackHoleShader.setFloat("u_CameraAngle", params.cameraAngle);
 
@@ -274,7 +282,7 @@ int main() {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     if (bloomParams.enabled) {
-      // === PASS 2: Extract bright areas ===
+      // Pass 2: Extract bright areas
       glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO.brightFBO);
       glViewport(0, 0, SCR_WIDTH / 2, SCR_HEIGHT / 2);
       glClear(GL_COLOR_BUFFER_BIT);
@@ -286,7 +294,7 @@ int main() {
       glBindTexture(GL_TEXTURE_2D, bloomFBO.sceneTexture);
       glDrawArrays(GL_TRIANGLES, 0, 6);
 
-      // === PASS 3: Gaussian blur (ping-pong) ===
+      // Pass 3: Gaussian blur (ping-pong)
       bool horizontal = true;
       int blurPasses = 6;
       bloomBlurShader.use();
@@ -305,7 +313,7 @@ int main() {
         horizontal = !horizontal;
       }
 
-      // === PASS 4: Composite ===
+      // Pass 4: Composite
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
       glClear(GL_COLOR_BUFFER_BIT);
@@ -323,7 +331,6 @@ int main() {
 
       glDrawArrays(GL_TRIANGLES, 0, 6);
     } else {
-      // No bloom: simple pass-through with tone mapping
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
       glClear(GL_COLOR_BUFFER_BIT);
@@ -337,12 +344,11 @@ int main() {
       glActiveTexture(GL_TEXTURE0);
       glBindTexture(GL_TEXTURE_2D, bloomFBO.sceneTexture);
       glActiveTexture(GL_TEXTURE1);
-      glBindTexture(GL_TEXTURE_2D, bloomFBO.sceneTexture); // dummy
+      glBindTexture(GL_TEXTURE_2D, bloomFBO.sceneTexture);
 
       glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
-    // Render ImGui
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -350,7 +356,6 @@ int main() {
     glfwPollEvents();
   }
 
-  // Cleanup
   deleteBloomFBOs();
   glDeleteVertexArrays(1, &quadVAO);
   glDeleteBuffers(1, &quadVBO);
@@ -375,7 +380,6 @@ void processInput(GLFWwindow *window) {
 }
 
 void saveScreenshot(int width, int height) {
-  // Create FBO for high-res render
   unsigned int fbo, texture;
   glGenFramebuffers(1, &fbo);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -396,12 +400,10 @@ void saveScreenshot(int width, int height) {
     return;
   }
 
-  // Render scene
   Shader shader("assets/shaders/vertex.glsl", "assets/shaders/fragment.glsl");
   Shader compositeShader("assets/shaders/vertex.glsl",
                          "assets/shaders/bloom_composite.glsl");
 
-  // Temp FBO for HDR scene
   unsigned int hdrFBO, hdrTexture;
   glGenFramebuffers(1, &hdrFBO);
   glBindFramebuffer(GL_FRAMEBUFFER, hdrFBO);
@@ -431,7 +433,6 @@ void saveScreenshot(int width, int height) {
                         (void *)(2 * sizeof(float)));
   glEnableVertexAttribArray(1);
 
-  // Render to HDR FBO
   glBindFramebuffer(GL_FRAMEBUFFER, hdrFBO);
   glViewport(0, 0, width, height);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -447,13 +448,13 @@ void saveScreenshot(int width, int height) {
   shader.setVec3("u_DiskColor1", params.diskColor1);
   shader.setVec3("u_DiskColor2", params.diskColor2);
   shader.setFloat("u_GlowIntensity", params.glowIntensity);
+  shader.setFloat("u_DiskPhase", diskPhase);
   shader.setFloat("u_CameraDistance", params.cameraDistance);
   shader.setFloat("u_CameraAngle", params.cameraAngle);
 
   glBindVertexArray(quadVAO);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
-  // Tone map to output FBO
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
   glClear(GL_COLOR_BUFFER_BIT);
 
@@ -467,18 +468,15 @@ void saveScreenshot(int width, int height) {
   glBindTexture(GL_TEXTURE_2D, hdrTexture);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
-  // Read pixels
   std::vector<unsigned char> pixels(width * height * 3);
   glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
 
-  // Flip vertically
   std::vector<unsigned char> flipped(width * height * 3);
   for (int y = 0; y < height; y++) {
     memcpy(&flipped[y * width * 3], &pixels[(height - 1 - y) * width * 3],
            width * 3);
   }
 
-  // Generate filename
   time_t now = time(0);
   struct tm *timeinfo = localtime(&now);
   char filename[128];
@@ -491,7 +489,6 @@ void saveScreenshot(int width, int height) {
     std::cerr << "Failed to save image!" << std::endl;
   }
 
-  // Cleanup
   glDeleteVertexArrays(1, &quadVAO);
   glDeleteBuffers(1, &quadVBO);
   glDeleteFramebuffers(1, &fbo);

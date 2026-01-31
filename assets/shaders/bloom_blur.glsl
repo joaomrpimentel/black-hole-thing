@@ -1,3 +1,8 @@
+/*
+ * Bloom Blur Shader
+ * Two-pass Gaussian blur using ping-pong buffers.
+ * Called multiple times alternating horizontal/vertical for smooth bloom.
+ */
 #version 330 core
 out vec4 FragColor;
 
@@ -7,7 +12,7 @@ uniform sampler2D u_Image;
 uniform bool u_Horizontal;
 uniform float u_BloomIntensity;
 
-// Gaussian weights for 9-tap blur
+// 9-tap Gaussian kernel weights
 const float weights[5] = float[](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
 
 void main() {
