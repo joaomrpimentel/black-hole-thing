@@ -13,6 +13,8 @@ void BloomRenderer::init(int width, int height) {
                                "assets/shaders/bloom_extract.glsl");
   m_blurShader = new Shader("assets/shaders/vertex.glsl",
                             "assets/shaders/bloom_blur.glsl");
+  m_kawaseShader = new Shader("assets/shaders/vertex.glsl",
+                              "assets/shaders/bloom_kawase.glsl");
   m_compositeShader = new Shader("assets/shaders/vertex.glsl",
                                  "assets/shaders/bloom_composite.glsl");
 
@@ -102,22 +104,22 @@ void BloomRenderer::applyBloom(const BloomParams &params,
   glBindTexture(GL_TEXTURE_2D, m_sceneTexture);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
-  // Pass 2: Gaussian blur (ping-pong)
-  bool horizontal = true;
-  int blurPasses = 6;
-  m_blurShader->use();
-  m_blurShader->setFloat("u_BloomIntensity", params.intensity);
+  // Pass 2: Kawase blur (4 iterations with increasing offsets)
+  // More efficient than 6-pass Gaussian: 4 passes × 5 taps vs 6 passes × 18
+  // taps
+  float offsets[] = {0.0f, 1.0f, 2.0f, 3.0f};
+  int kawasePasses = 4;
+  m_kawaseShader->use();
+  m_kawaseShader->setFloat("u_BloomIntensity", params.intensity);
 
-  for (int i = 0; i < blurPasses; i++) {
-    glBindFramebuffer(GL_FRAMEBUFFER, m_pingpongFBO[horizontal ? 1 : 0]);
+  for (int i = 0; i < kawasePasses; i++) {
+    glBindFramebuffer(GL_FRAMEBUFFER, m_pingpongFBO[i % 2]);
     glClear(GL_COLOR_BUFFER_BIT);
-    m_blurShader->setBool("u_Horizontal", horizontal);
-    m_blurShader->setInt("u_Image", 0);
-    glBindTexture(GL_TEXTURE_2D, i == 0
-                                     ? m_brightTexture
-                                     : m_pingpongTextures[horizontal ? 0 : 1]);
+    m_kawaseShader->setFloat("u_Offset", offsets[i]);
+    m_kawaseShader->setInt("u_Image", 0);
+    glBindTexture(GL_TEXTURE_2D,
+                  i == 0 ? m_brightTexture : m_pingpongTextures[(i + 1) % 2]);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-    horizontal = !horizontal;
   }
 
   // Pass 3: Composite
@@ -173,6 +175,7 @@ void BloomRenderer::deleteResources() {
 
   delete m_extractShader;
   delete m_blurShader;
+  delete m_kawaseShader;
   delete m_compositeShader;
 
   m_initialized = false;

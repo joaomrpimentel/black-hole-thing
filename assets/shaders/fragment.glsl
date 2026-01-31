@@ -16,6 +16,7 @@ uniform float u_DiskPhase;
 uniform float u_CameraDistance;
 uniform float u_CameraAngle;
 uniform sampler3D u_NoiseTexture;
+uniform samplerCube u_StarfieldCubemap;
 
 const float PI = 3.14159265359;
 const float SCHWARZSCHILD_FACTOR = 3.0;
@@ -89,50 +90,47 @@ vec3 rotateX(vec3 v, float angle) {
 }
 
 // ============================================================================
-// STARFIELD
+// STARFIELD - Samples pre-rendered cubemap for O(1) performance
 // ============================================================================
 
 vec3 getStars(vec3 rd, float lensingAmount, vec3 initialDir, vec3 cameraPos) {
-    vec3 col = vec3(0.0);
-    
     vec3 toBlackHole = normalize(-cameraPos);
+    float distFromCamera = length(cameraPos);
     float angularDistToCenter = acos(clamp(dot(normalize(initialDir), toBlackHole), -1.0, 1.0));
     
-    float stretchZone = 0.3;
-    float proximityStretch = 1.0 - smoothstep(0.0, stretchZone, angularDistToCenter);
-    proximityStretch = pow(proximityStretch, 0.5);
+    float apparentSize = u_BlackHoleRadius * 3.0 / distFromCamera;
+    float innerZone = clamp(apparentSize * 0.8, 0.05, 0.2);   
+    float outerZone = clamp(apparentSize * 2.5, 0.15, 0.6);   
     
-    float totalStretch = max(lensingAmount, proximityStretch * 0.5);
-    float stretch = 1.0 + totalStretch * 6.0;
-    
-    float theta = atan(rd.z, rd.x);
-    float phi = asin(clamp(rd.y, -1.0, 1.0));
-    
-    for (int i = 0; i < 4; i++) {
-        float layerDist = 50.0 + float(i) * 40.0;
-        vec2 sphereCoord = vec2(theta, phi) * layerDist * 0.5;
-        
-        vec2 stretchedCoord = sphereCoord;
-        stretchedCoord.y /= stretch;
-        
-        vec2 id = floor(stretchedCoord + float(i) * 7.3);
-        float star = hash(id);
-        
-        if (star > 0.96) {
-            float brightness = pow(star - 0.96, 0.4) * 40.0;
-            vec2 starUV = fract(stretchedCoord + float(i) * 7.3) - 0.5;
-            
-            float starSize = 0.03 + totalStretch * 0.25;
-            float d = length(starUV * vec2(1.0, stretch * 0.5));
-            brightness *= smoothstep(starSize, 0.0, d);
-            
-            vec3 starColor = mix(vec3(1.0, 0.95, 0.9), vec3(0.9, 0.95, 1.0), hash(id + 0.5));
-            col += starColor * brightness;
-        }
+    float proximityStretch;
+    if (angularDistToCenter < innerZone) {
+        proximityStretch = 1.0;
+    } else if (angularDistToCenter < outerZone) {
+        float t = (angularDistToCenter - innerZone) / (outerZone - innerZone);
+        proximityStretch = 1.0 - smoothstep(0.0, 1.0, t);
+        proximityStretch = pow(proximityStretch, 0.5);  
+    } else {
+        proximityStretch = 0.0;
     }
     
-    float nebula = fbm(rd.xy * 3.0 + rd.z * 2.0) * 0.1;
-    col += vec3(0.08, 0.04, 0.12) * nebula;
+    float radiusScale = u_BlackHoleRadius * 2.0;
+    
+    float totalStretch = max(lensingAmount * 2.0, proximityStretch) * radiusScale;
+    
+    float stretch = 1.0 + totalStretch * 20.0;
+    
+    vec3 sampleDir = rd;
+    
+    vec3 radialDir = normalize(toBlackHole - rd * dot(rd, toBlackHole));
+    float radialPull = totalStretch * 0.4;
+    sampleDir = normalize(sampleDir + radialDir * radialPull);
+    
+    sampleDir.y /= stretch;
+    sampleDir = normalize(sampleDir);
+    
+    vec3 col = texture(u_StarfieldCubemap, sampleDir).rgb;
+    
+    col *= 1.0 + totalStretch * 1.5;
     
     return col;
 }

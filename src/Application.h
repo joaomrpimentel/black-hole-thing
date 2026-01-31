@@ -10,6 +10,7 @@
 #include "NoiseTexture.h"
 #include "ScreenshotExporter.h"
 #include "Shader.h"
+#include "StarfieldCubemap.h"
 
 struct BlackHoleParams {
   float radius = 0.5f;
@@ -63,6 +64,7 @@ private:
   BloomRenderer m_bloomRenderer;
   ScreenshotExporter m_screenshotExporter;
   NoiseTexture m_noiseTexture;
+  StarfieldCubemap m_starfieldCubemap;
 
   // Parameters
   BlackHoleParams m_params;

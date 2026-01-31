@@ -67,6 +67,7 @@ add_executable(${PROJECT_NAME}
     src/BloomRenderer.cpp
     src/ScreenshotExporter.cpp
     src/NoiseTexture.cpp
+    src/StarfieldCubemap.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

@@ -48,6 +48,7 @@ private:
   // Shaders
   Shader *m_extractShader = nullptr;
   Shader *m_blurShader = nullptr;
+  Shader *m_kawaseShader = nullptr;
   Shader *m_compositeShader = nullptr;
 
   int m_width = 0;

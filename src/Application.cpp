@@ -95,6 +95,9 @@ bool Application::init(int width, int height, const char *title) {
   // Generate 3D noise texture (128^3 RGBA, ~100ms)
   m_noiseTexture.generate(128);
 
+  // Generate starfield cubemap (2048x2048 per face)
+  m_starfieldCubemap.init(2048);
+
   return true;
 }
 
@@ -292,6 +295,9 @@ void Application::renderScene() {
 
   m_noiseTexture.bind(2);
   m_blackHoleShader->setInt("u_NoiseTexture", 2);
+
+  m_starfieldCubemap.bind(3);
+  m_blackHoleShader->setInt("u_StarfieldCubemap", 3);
 
   glBindVertexArray(m_quadVAO);
   glDrawArrays(GL_TRIANGLES, 0, 6);
