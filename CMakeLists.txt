@@ -63,6 +63,9 @@ target_link_libraries(imgui PUBLIC glfw glad)
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/Shader.cpp
+    src/Application.cpp
+    src/BloomRenderer.cpp
+    src/ScreenshotExporter.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
