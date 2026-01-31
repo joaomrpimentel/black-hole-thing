@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 
 #include "BloomRenderer.h"
+#include "NoiseTexture.h"
 #include "ScreenshotExporter.h"
 #include "Shader.h"
 
@@ -18,7 +19,7 @@ struct BlackHoleParams {
   glm::vec3 diskColor1 = glm::vec3(1.0f, 0.6f, 0.1f);
   glm::vec3 diskColor2 = glm::vec3(0.8f, 0.2f, 0.05f);
   float glowIntensity = 1.0f;
-  float diskSpeed = 2.0f;
+  float diskSpeed = 0.5f;
   float cameraDistance = 10.0f;
   float cameraAngle = 0.5f;
 };
@@ -61,6 +62,7 @@ private:
   // Subsystems
   BloomRenderer m_bloomRenderer;
   ScreenshotExporter m_screenshotExporter;
+  NoiseTexture m_noiseTexture;
 
   // Parameters
   BlackHoleParams m_params;

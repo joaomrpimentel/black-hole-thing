@@ -15,11 +15,12 @@ uniform float u_GlowIntensity;
 uniform float u_DiskPhase;
 uniform float u_CameraDistance;
 uniform float u_CameraAngle;
+uniform sampler3D u_NoiseTexture;
 
 const float PI = 3.14159265359;
 const float SCHWARZSCHILD_FACTOR = 3.0;
-const int MAX_STEPS = 300;
-const float MAX_DIST = 100.0;
+const int MAX_STEPS = 200;
+const float MAX_DIST = 80.0;
 const float EPSILON = 0.001;
 
 // ============================================================================
@@ -56,82 +57,23 @@ float fbm(vec2 p) {
     return value;
 }
 
-// 3D Simplex Noise - used for volumetric disk turbulence
-vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
-vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
-
-float snoise(vec3 v) {
-    const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
-    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
-
-    vec3 i = floor(v + dot(v, C.yyy));
-    vec3 x0 = v - i + dot(i, C.xxx);
-
-    vec3 g = step(x0.yzx, x0.xyz);
-    vec3 l = 1.0 - g;
-    vec3 i1 = min(g.xyz, l.zxy);
-    vec3 i2 = max(g.xyz, l.zxy);
-
-    vec3 x1 = x0 - i1 + C.xxx;
-    vec3 x2 = x0 - i2 + C.yyy;
-    vec3 x3 = x0 - D.yyy;
-
-    i = mod289(i);
-    vec4 p = permute(permute(permute(
-        i.z + vec4(0.0, i1.z, i2.z, 1.0))
-        + i.y + vec4(0.0, i1.y, i2.y, 1.0))
-        + i.x + vec4(0.0, i1.x, i2.x, 1.0));
-
-    float n_ = 0.142857142857;
-    vec3 ns = n_ * D.wyz - D.xzx;
-
-    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-
-    vec4 x_ = floor(j * ns.z);
-    vec4 y_ = floor(j - 7.0 * x_);
-
-    vec4 x = x_ * ns.x + ns.yyyy;
-    vec4 y = y_ * ns.x + ns.yyyy;
-    vec4 h = 1.0 - abs(x) - abs(y);
-
-    vec4 b0 = vec4(x.xy, y.xy);
-    vec4 b1 = vec4(x.zw, y.zw);
-
-    vec4 s0 = floor(b0) * 2.0 + 1.0;
-    vec4 s1 = floor(b1) * 2.0 + 1.0;
-    vec4 sh = -step(h, vec4(0.0));
-
-    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
-    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
-
-    vec3 p0 = vec3(a0.xy, h.x);
-    vec3 p1 = vec3(a0.zw, h.y);
-    vec3 p2 = vec3(a1.xy, h.z);
-    vec3 p3 = vec3(a1.zw, h.w);
-
-    vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
-    p0 *= norm.x;
-    p1 *= norm.y;
-    p2 *= norm.z;
-    p3 *= norm.w;
-
-    vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
-    m = m * m;
-    return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+vec4 sampleNoise3D(vec3 p) {
+    return texture(u_NoiseTexture, p);
 }
 
-float turbulence3D(vec3 p, int octaves) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < octaves; i++) {
-        value += amplitude * abs(snoise(p * frequency));
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
+float turbulenceFromTexture(vec3 p) {
+    vec4 n = sampleNoise3D(p);
+    float base = n.r * 2.0 - 1.0;
+    float oct2 = n.g * 2.0 - 1.0;
+    float oct3 = n.b * 2.0 - 1.0;
+    
+    float value = abs(base) * 0.5 + abs(oct2) * 0.25 + abs(oct3) * 0.125;
     return value;
+}
+
+float signedNoiseFromTexture(vec3 p) {
+    float n = sampleNoise3D(p).r;
+    return n * 2.0 - 1.0;
 }
 
 vec3 rotateY(vec3 v, float angle) {
@@ -148,15 +90,11 @@ vec3 rotateX(vec3 v, float angle) {
 
 // ============================================================================
 // STARFIELD
-// Creates a procedural starfield with gravitational lensing stretch effect.
-// Stars near the black hole appear elongated due to spacetime curvature.
 // ============================================================================
 
 vec3 getStars(vec3 rd, float lensingAmount, vec3 initialDir, vec3 cameraPos) {
     vec3 col = vec3(0.0);
     
-    // Stretch stars based on their angular proximity to the black hole center
-    // Uses the initial ray direction (before bending) to determine visual position
     vec3 toBlackHole = normalize(-cameraPos);
     float angularDistToCenter = acos(clamp(dot(normalize(initialDir), toBlackHole), -1.0, 1.0));
     
@@ -167,11 +105,9 @@ vec3 getStars(vec3 rd, float lensingAmount, vec3 initialDir, vec3 cameraPos) {
     float totalStretch = max(lensingAmount, proximityStretch * 0.5);
     float stretch = 1.0 + totalStretch * 6.0;
     
-    // Convert to spherical coords for consistent star distribution
     float theta = atan(rd.z, rd.x);
     float phi = asin(clamp(rd.y, -1.0, 1.0));
     
-    // Multiple star layers at different distances for depth
     for (int i = 0; i < 4; i++) {
         float layerDist = 50.0 + float(i) * 40.0;
         vec2 sphereCoord = vec2(theta, phi) * layerDist * 0.5;
@@ -195,7 +131,6 @@ vec3 getStars(vec3 rd, float lensingAmount, vec3 initialDir, vec3 cameraPos) {
         }
     }
     
-    // Subtle purple nebula in background
     float nebula = fbm(rd.xy * 3.0 + rd.z * 2.0) * 0.1;
     col += vec3(0.08, 0.04, 0.12) * nebula;
     
@@ -203,10 +138,7 @@ vec3 getStars(vec3 rd, float lensingAmount, vec3 initialDir, vec3 cameraPos) {
 }
 
 // ============================================================================
-// ACCRETION DISK
-// Simulates a rotating disk of hot gas around the black hole.
-// Includes relativistic Doppler beaming: the approaching side appears brighter
-// and bluer, while the receding side appears dimmer and redder.
+// ACCRETION DISK - Texture-based noise for performance
 // ============================================================================
 
 vec3 sampleDisk(vec3 pos, float distToCenter) {
@@ -217,35 +149,50 @@ vec3 sampleDisk(vec3 pos, float distToCenter) {
     float t = (distToCenter - u_DiskInnerRadius) / (u_DiskOuterRadius - u_DiskInnerRadius);
     float angle = atan(pos.z, pos.x);
     
-    // Animated turbulent flow pattern
-    float orbitalPhase = angle * 8.0 - u_DiskPhase;
-    float radialCoord = distToCenter * 3.0;
+    // ===== TANGENTIAL GAS STREAKS =====
+    float rotAngle = angle - u_DiskPhase * 0.2;
     
-    vec3 flowPos = vec3(orbitalPhase, radialCoord, u_Time * 0.5 + distToCenter * 0.3);
+    float u = rotAngle / (2.0 * PI);
+    float v = t; // 0.0 to 1.0
     
-    float flowNoise = snoise(flowPos * vec3(0.3, 1.0, 1.0));
-    flowNoise = 0.5 + 0.5 * flowNoise;
+
+    // === Layer 1: Base Flow (The "river") ===
+    // Medium radial freq to define lanes, heavily warped
+    float warp = sampleNoise3D(vec3(u * 2.0, v * 1.5, u_Time * 0.05)).b * 0.15;
+    vec3 baseCoord = vec3(u * 3.0 + warp, v * 4.0 + warp, 0.0);
+    float baseFlow = sampleNoise3D(baseCoord).r; // [0,1]
     
-    float fineStreaks = snoise(flowPos * vec3(0.5, 2.0, 1.5) + vec3(u_Time * 0.8, 0.0, 0.0));
-    fineStreaks = pow(abs(fineStreaks), 0.3);
+    baseFlow = smoothstep(0.2, 0.8, baseFlow);
     
-    float vortex = snoise(vec3(angle * 2.0 + u_Time * 0.3, distToCenter * 1.5, u_Time * 0.2));
-    vortex = pow(abs(vortex), 2.0) * 0.5;
+    // === Layer 2: Engraved Streaks (Texture) ===
+    // High freq, stretched tangentially
+    // These add the "fast gas" look on top of the heavy river
+    vec3 streakCoord = vec3(u * 8.0 + warp * 2.0, v * 12.0, u_Time * 0.1);
+    float streaks = sampleNoise3D(streakCoord).g;
     
-    float diskNoise = flowNoise * 0.6 + fineStreaks * 0.3 + vortex * 0.1;
+    streaks = pow(streaks, 2.0);
     
-    // Temperature gradient: hotter (brighter) near the inner edge
+    // === Layer 3: Hotspots/Clumps ===
+    // Variation in brightness
+    float clumps = sampleNoise3D(vec3(u * 4.0, v * 3.0, 5.0)).b;
+    
+    float noiseVal = baseFlow * 0.6 + streaks * 0.4;
+    noiseVal *= (0.7 + 0.3 * clumps);
+    float diskNoise = 0.3 + 0.7 * noiseVal;
+    
+    float edgeFade = smoothstep(0.0, 0.15, t) * smoothstep(1.0, 0.85, t);
+    diskNoise = diskNoise * edgeFade + (1.0 - edgeFade) * 0.1; // Darker at edges
+    
+    // Temperature gradient
     float temperature = pow(1.0 - t, 0.5);
     vec3 baseColor = mix(u_DiskColor2, u_DiskColor1, temperature);
     
-    // Relativistic Doppler beaming calculation
-    // Orbital velocity is tangent to the disk at each point
+    // Relativistic Doppler beaming
     float orbitalSpeed = 0.4 * (1.0 - t * 0.5);
     vec3 tangent = normalize(vec3(-sin(angle), 0.0, cos(angle)));
     vec3 velocity = tangent * orbitalSpeed;
     vec3 viewDir = normalize(vec3(0.0, sin(u_CameraAngle), cos(u_CameraAngle)));
     
-    // Positive = approaching camera (blueshift), Negative = receding (redshift)
     float dopplerFactor = dot(velocity, viewDir);
     
     float beaming = pow(1.0 + dopplerFactor * 2.0, 3.0);
@@ -260,7 +207,7 @@ vec3 sampleDisk(vec3 pos, float distToCenter) {
         color = mix(color, color * redShift * 0.7, abs(dopplerFactor) * 1.2);
     }
     
-    color *= 0.4 + 0.6 * diskNoise;
+    color *= 0.3 + 0.7 * diskNoise;
     float brightness = (1.0 - t) * (0.2 + 0.8 * diskNoise) * beaming;
     
     return color * brightness * 2.0;
@@ -275,7 +222,6 @@ vec3 sampleDisk(vec3 pos, float distToCenter) {
 void main() {
     vec2 uv = (gl_FragCoord.xy - 0.5 * u_Resolution) / min(u_Resolution.x, u_Resolution.y);
     
-    // Camera orbits the black hole at the origin
     vec3 ro = rotateX(vec3(0.0, 0.0, u_CameraDistance), u_CameraAngle);
     
     vec3 forward = normalize(-ro);
@@ -288,14 +234,15 @@ void main() {
     vec3 initialDir = rd;
     
     vec3 color = vec3(0.0);
-    float bloomMask = 0.0;  // Alpha channel: 1=bloom, 0=no bloom
+    float bloomMask = 0.0;
     float totalDist = 0.0;
     bool hitDisk = false;
     bool hitHorizon = false;
     float accumulatedLensing = 0.0;
     float prevY = pos.y;
     
-    // Ray march with gravitational deflection
+    float photonSphere = u_BlackHoleRadius * 1.5;
+    
     for (int i = 0; i < MAX_STEPS; i++) {
         float distToCenter = length(pos);
         
@@ -306,7 +253,10 @@ void main() {
         
         if (totalDist > MAX_DIST) break;
         
-        // Gravitational light bending: rays curve toward the mass
+        if (distToCenter > u_DiskOuterRadius * 2.5 && dot(vel, pos) > 0.0) {
+            break;
+        }
+        
         vec3 toCenter = -normalize(pos);
         float gravity = u_BlackHoleRadius * SCHWARZSCHILD_FACTOR / (distToCenter * distToCenter);
         
@@ -319,10 +269,9 @@ void main() {
         vec3 newPos = pos + vel * stepSize;
         float newY = newPos.y;
         
-        // Check for disk intersection when crossing y=0 plane
         if (prevY * newY < 0.0 && abs(newY) < u_DiskThickness) {
-            float t = prevY / (prevY - newY);
-            vec3 intersect = pos + vel * stepSize * t;
+            float interpT = prevY / (prevY - newY);
+            vec3 intersect = pos + vel * stepSize * interpT;
             float discDist = length(vec2(intersect.x, intersect.z));
             
             vec3 diskColor = sampleDisk(intersect, discDist);
@@ -344,7 +293,6 @@ void main() {
         color += getStars(vel, lensingAmount, initialDir, ro);
     }
     
-    // Screen-space glow effect around black hole silhouette
     float angularDist = acos(clamp(dot(normalize(rd), normalize(-ro)), -1.0, 1.0));
     float glowRadius = atan(u_BlackHoleRadius * 10.0 / u_CameraDistance);
     
@@ -355,7 +303,6 @@ void main() {
         bloomMask = max(bloomMask, glow);
     }
     
-    // Photon ring: light orbiting at the photon sphere (~1.5x event horizon)
     float photonRingRadius = atan(u_BlackHoleRadius * 1.5 / u_CameraDistance);
     float photonRing = smoothstep(0.03, 0.0, abs(angularDist - photonRingRadius));
     if (!hitHorizon) {

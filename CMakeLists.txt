@@ -66,6 +66,7 @@ add_executable(${PROJECT_NAME}
     src/Application.cpp
     src/BloomRenderer.cpp
     src/ScreenshotExporter.cpp
+    src/NoiseTexture.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

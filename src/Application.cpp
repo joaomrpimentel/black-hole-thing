@@ -92,6 +92,9 @@ bool Application::init(int width, int height, const char *title) {
   m_bloomRenderer.init(width, height);
   m_screenshotExporter.init();
 
+  // Generate 3D noise texture (128^3 RGBA, ~100ms)
+  m_noiseTexture.generate(128);
+
   return true;
 }
 
@@ -286,6 +289,9 @@ void Application::renderScene() {
   m_blackHoleShader->setFloat("u_DiskPhase", m_diskPhase);
   m_blackHoleShader->setFloat("u_CameraDistance", m_params.cameraDistance);
   m_blackHoleShader->setFloat("u_CameraAngle", m_params.cameraAngle);
+
+  m_noiseTexture.bind(2);
+  m_blackHoleShader->setInt("u_NoiseTexture", 2);
 
   glBindVertexArray(m_quadVAO);
   glDrawArrays(GL_TRIANGLES, 0, 6);
