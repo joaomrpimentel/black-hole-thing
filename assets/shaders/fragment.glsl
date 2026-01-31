@@ -147,30 +147,56 @@ vec3 rotateX(vec3 v, float angle) {
 }
 
 // Starfield background with lensing-aware stretching
-vec3 getStars(vec3 rd, float lensingAmount) {
+vec3 getStars(vec3 rd, float lensingAmount, vec3 initialDir, vec3 cameraPos) {
     vec3 col = vec3(0.0);
     
-    // Stretch factor based on how much lensing occurred
-    float stretch = 1.0 + lensingAmount * 3.0;
+    // Calculate proximity to black hole center based on INITIAL ray direction
+    // Stars that initially pointed toward the black hole should stretch, 
+    // regardless of where the ray ended up after bending
+    vec3 toBlackHole = normalize(-cameraPos); // Direction from camera to black hole
+    float angularDistToCenter = acos(clamp(dot(normalize(initialDir), toBlackHole), -1.0, 1.0));
+    
+    // Stars very close to the event horizon (small angular distance) should stretch a lot
+    // Use a tighter threshold for the stretching zone
+    float stretchZone = 0.3; // About 17 degrees from center
+    float proximityStretch = 1.0 - smoothstep(0.0, stretchZone, angularDistToCenter);
+    proximityStretch = pow(proximityStretch, 0.5); // More gradual falloff
+    
+    // Use lensing amount as the primary stretch factor for rays that bent
+    // Combine with proximity for rays near the black hole
+    float totalStretch = max(lensingAmount, proximityStretch * 0.5);
+    float stretch = 1.0 + totalStretch * 6.0;
+    
+    // Compute stretch direction: tangent to circles around the black hole center
+    // Project ray direction onto spherical coordinates
+    float theta = atan(rd.z, rd.x); // azimuthal angle
+    float phi = asin(clamp(rd.y, -1.0, 1.0)); // polar angle
     
     // Multiple layers of stars
     for (int i = 0; i < 4; i++) {
         float layerDist = 50.0 + float(i) * 40.0;
-        vec3 p = rd * layerDist;
         
-        // Apply stretching perpendicular to the view direction
-        vec2 id = floor(p.xy * vec2(1.0, 1.0 / stretch) + p.z);
+        // Use spherical coordinates for more accurate lensing
+        // Stars should stretch tangentially (perpendicular to radial direction from center)
+        vec2 sphereCoord = vec2(theta, phi) * layerDist * 0.5;
+        
+        // Apply radial stretching: compress in the tangential direction creates apparent elongation
+        vec2 stretchedCoord = sphereCoord;
+        stretchedCoord.y /= stretch; // Stretch in the phi (vertical) direction
+        
+        vec2 id = floor(stretchedCoord + float(i) * 7.3);
         float star = hash(id);
         
         if (star > 0.96) {
             float brightness = pow(star - 0.96, 0.4) * 40.0;
             
-            // Star position with stretch
-            vec2 starUV = fract(p.xy * vec2(1.0, 1.0 / stretch) + p.z) - 0.5;
+            // Star position within cell
+            vec2 starUV = fract(stretchedCoord + float(i) * 7.3) - 0.5;
             
-            // Elongate stars based on lensing
-            float starSize = 0.03 + lensingAmount * 0.15;
-            float d = length(starUV * vec2(1.0, stretch));
+            // Elongate the star shape based on total stretch amount
+            float starSize = 0.03 + totalStretch * 0.25;
+            // Stars appear stretched in the tangential direction
+            float d = length(starUV * vec2(1.0, stretch * 0.5));
             brightness *= smoothstep(starSize, 0.0, d);
             
             // Star color variation
@@ -307,6 +333,7 @@ void main() {
     vec3 initialDir = rd;
     
     vec3 color = vec3(0.0);
+    float bloomMask = 0.0; // 0 = no bloom (stars), 1 = bloom (disk, glow)
     float totalDist = 0.0;
     bool hitDisk = false;
     bool hitHorizon = false;
@@ -356,6 +383,7 @@ void main() {
             vec3 diskColor = sampleDisk(intersect, discDist);
             if (length(diskColor) > 0.0) {
                 color += diskColor;
+                bloomMask = 1.0; // Disk should bloom
                 hitDisk = true;
             }
         }
@@ -370,23 +398,32 @@ void main() {
     
     // Background (stars) if we didn't hit the event horizon
     if (!hitHorizon) {
-        color += getStars(vel, lensingAmount);
+        color += getStars(vel, lensingAmount, initialDir, ro);
+        // Stars should NOT bloom - bloomMask stays at 0.0 for star-only pixels
     }
     
-    // Glow around black hole
-    float distToCenter = length(pos);
-    if (!hitHorizon && distToCenter < u_BlackHoleRadius * 5.0) {
-        float glow = 1.0 - smoothstep(u_BlackHoleRadius, u_BlackHoleRadius * 5.0, distToCenter);
-        glow = pow(glow, 3.0);
-        color += vec3(1.0, 0.5, 0.2) * glow * u_GlowIntensity * 0.5;
+    // Glow around black hole - based on screen-space proximity, not ray endpoint
+    // Calculate angular distance from view center (where black hole is)
+    float angularDist = acos(clamp(dot(normalize(rd), normalize(-ro)), -1.0, 1.0));
+    // Make glow radius much larger so it's visible - about 10x the black hole angular size
+    float glowRadius = atan(u_BlackHoleRadius * 10.0 / u_CameraDistance);
+    
+    if (angularDist < glowRadius && !hitHorizon) {
+        float glow = 1.0 - smoothstep(0.0, glowRadius, angularDist);
+        glow = pow(glow, 1.5); // Softer falloff
+        color += vec3(1.0, 0.5, 0.2) * glow * u_GlowIntensity;
+        bloomMask = max(bloomMask, glow);
     }
     
     // Photon ring (thin bright ring at ~1.5x Schwarzschild radius)
-    float photonRing = smoothstep(0.02, 0.0, abs(distToCenter - u_BlackHoleRadius * 1.5));
+    float photonRingRadius = atan(u_BlackHoleRadius * 1.5 / u_CameraDistance);
+    float photonRing = smoothstep(0.03, 0.0, abs(angularDist - photonRingRadius));
     if (!hitHorizon) {
         color += vec3(1.0, 0.9, 0.7) * photonRing * u_GlowIntensity;
+        bloomMask = max(bloomMask, photonRing); // Photon ring should bloom
     }
     
     // Output HDR values - tone mapping and gamma done in post-processing
-    FragColor = vec4(color, 1.0);
+    // Alpha channel stores bloom mask: 1.0 = bloom, 0.0 = no bloom
+    FragColor = vec4(color, bloomMask);
 }

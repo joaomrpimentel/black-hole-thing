@@ -232,7 +232,7 @@ int main() {
 
     ImGui::SeparatorText("Camera");
     ImGui::SliderFloat("Distance", &params.cameraDistance, 5.0f, 30.0f);
-    ImGui::SliderFloat("Angle", &params.cameraAngle, 0.0f, 1.57f);
+    ImGui::SliderFloat("Angle", &params.cameraAngle, -1.57f, 1.57f);
 
     ImGui::SeparatorText("Bloom");
     ImGui::Checkbox("Enable Bloom", &bloomParams.enabled);
