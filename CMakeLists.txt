@@ -65,6 +65,7 @@ add_executable(${PROJECT_NAME}
     src/Shader.cpp
     src/Application.cpp
     src/BloomRenderer.cpp
+    src/BlackHoleRenderer.cpp
     src/ScreenshotExporter.cpp
     src/NoiseTexture.cpp
     src/StarfieldCubemap.cpp

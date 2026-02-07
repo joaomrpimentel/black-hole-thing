@@ -8,19 +8,7 @@
 #include <iostream>
 #include <vector>
 
-// Forward declare BlackHoleParams (must match main definition)
-struct BlackHoleParams {
-  float radius;
-  float diskInnerRadius;
-  float diskOuterRadius;
-  float diskThickness;
-  glm::vec3 diskColor1;
-  glm::vec3 diskColor2;
-  float glowIntensity;
-  float diskSpeed;
-  float cameraDistance;
-  float cameraAngle;
-};
+
 
 ScreenshotExporter::ScreenshotExporter() {}
 
@@ -95,6 +83,7 @@ std::string ScreenshotExporter::capture(int width, int height,
                                         Shader &sceneShader,
                                         Shader &compositeShader,
                                         const BlackHoleParams &params,
+                                        const CameraParams &camParams,
                                         float diskPhase, float exposure) {
   if (!m_initialized) {
     std::cerr << "ScreenshotExporter not initialized!" << std::endl;
@@ -129,8 +118,8 @@ std::string ScreenshotExporter::capture(int width, int height,
   sceneShader.setVec3("u_DiskColor2", params.diskColor2);
   sceneShader.setFloat("u_GlowIntensity", params.glowIntensity);
   sceneShader.setFloat("u_DiskPhase", diskPhase);
-  sceneShader.setFloat("u_CameraDistance", params.cameraDistance);
-  sceneShader.setFloat("u_CameraAngle", params.cameraAngle);
+  sceneShader.setFloat("u_CameraDistance", camParams.distance);
+  sceneShader.setFloat("u_CameraAngle", camParams.angle);
 
   glBindVertexArray(m_quadVAO);
   glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -145,6 +134,7 @@ std::string ScreenshotExporter::capture(int width, int height,
   compositeShader.setFloat("u_BloomStrength", 0.0f);
   compositeShader.setFloat("u_Exposure", exposure);
 
+  auto& texture = m_hdrTexture; // Use reference to avoid warning or errors, actually this line is not needed if we just use m_hdrTexture.
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, m_hdrTexture);
   glDrawArrays(GL_TRIANGLES, 0, 6);

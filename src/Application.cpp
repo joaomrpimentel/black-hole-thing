@@ -67,36 +67,10 @@ bool Application::init(int width, int height, const char *title) {
   ImGui_ImplGlfw_InitForOpenGL(m_window, true);
   ImGui_ImplOpenGL3_Init("#version 330");
 
-  // Create fullscreen quad
-  float quadVertices[] = {-1.0f, 1.0f,  0.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f,
-                          1.0f,  -1.0f, 1.0f, 0.0f, -1.0f, 1.0f,  0.0f, 1.0f,
-                          1.0f,  -1.0f, 1.0f, 0.0f, 1.0f,  1.0f,  1.0f, 1.0f};
-
-  glGenVertexArrays(1, &m_quadVAO);
-  glGenBuffers(1, &m_quadVBO);
-  glBindVertexArray(m_quadVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, m_quadVBO);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices,
-               GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                        (void *)(2 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-
-  // Load shaders
-  m_blackHoleShader =
-      new Shader("assets/shaders/vertex.glsl", "assets/shaders/fragment.glsl");
-
   // Initialize subsystems
   m_bloomRenderer.init(width, height);
   m_screenshotExporter.init();
-
-  // Generate 3D noise texture (128^3 RGBA, ~100ms)
-  m_noiseTexture.generate(128);
-
-  // Generate starfield cubemap (2048x2048 per face)
-  m_starfieldCubemap.init(2048);
+  m_blackHoleRenderer.init(width, height);
 
   return true;
 }
@@ -108,7 +82,8 @@ void Application::run() {
     m_lastFrameTime = currentTime;
     m_fps = 1.0f / m_frameTime;
 
-    m_diskPhase += m_frameTime * m_params.diskSpeed;
+    // Update simulation
+    m_blackHoleRenderer.update(m_frameTime);
 
     processInput();
 
@@ -128,14 +103,8 @@ void Application::run() {
 }
 
 void Application::shutdown() {
-  if (m_blackHoleShader) {
-    delete m_blackHoleShader;
-    m_blackHoleShader = nullptr;
-  }
-
-  glDeleteVertexArrays(1, &m_quadVAO);
-  glDeleteBuffers(1, &m_quadVBO);
-
+  m_blackHoleRenderer.shutdown();
+  
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
@@ -159,21 +128,19 @@ void Application::framebufferSizeCallback(GLFWwindow *window, int width,
 
 void Application::scrollCallback(GLFWwindow *window, double xoffset,
                                  double yoffset) {
-  // Check if ImGui wants to capture the mouse
   ImGuiIO &io = ImGui::GetIO();
   if (io.WantCaptureMouse)
     return;
 
   if (s_instance) {
-    s_instance->m_params.cameraDistance -= (float)yoffset * 0.5f;
-    s_instance->m_params.cameraDistance =
-        glm::clamp(s_instance->m_params.cameraDistance, 5.0f, 30.0f);
+    auto& params = s_instance->m_blackHoleRenderer.getCameraParams();
+    params.distance -= (float)yoffset * 0.5f;
+    params.distance = glm::clamp(params.distance, 5.0f, 30.0f);
   }
 }
 
 void Application::cursorPosCallback(GLFWwindow *window, double xpos,
                                     double ypos) {
-  // Check if ImGui wants to capture the mouse
   ImGuiIO &io = ImGui::GetIO();
   if (io.WantCaptureMouse)
     return;
@@ -183,9 +150,9 @@ void Application::cursorPosCallback(GLFWwindow *window, double xpos,
     double dy = ypos - s_instance->m_lastMouseY;
 
     // Adjust camera angle based on vertical drag
-    s_instance->m_params.cameraAngle += (float)dy * 0.005f;
-    s_instance->m_params.cameraAngle =
-        glm::clamp(s_instance->m_params.cameraAngle, -1.57f, 1.57f);
+    auto& params = s_instance->m_blackHoleRenderer.getCameraParams();
+    params.angle += (float)dy * 0.005f;
+    params.angle = glm::clamp(params.angle, -1.57f, 1.57f);
 
     s_instance->m_lastMouseX = xpos;
     s_instance->m_lastMouseY = ypos;
@@ -194,7 +161,6 @@ void Application::cursorPosCallback(GLFWwindow *window, double xpos,
 
 void Application::mouseButtonCallback(GLFWwindow *window, int button,
                                       int action, int mods) {
-  // Check if ImGui wants to capture the mouse
   ImGuiIO &io = ImGui::GetIO();
   if (io.WantCaptureMouse)
     return;
@@ -221,21 +187,24 @@ void Application::renderUI() {
   ImGui::Begin("Black Hole Controls", nullptr,
                ImGuiWindowFlags_AlwaysAutoResize);
 
+  BlackHoleParams& params = m_blackHoleRenderer.getParams();
+  CameraParams& camParams = m_blackHoleRenderer.getCameraParams();
+
   ImGui::SeparatorText("Black Hole");
-  ImGui::SliderFloat("Radius", &m_params.radius, 0.1f, 2.0f);
-  ImGui::SliderFloat("Glow Intensity", &m_params.glowIntensity, 0.0f, 3.0f);
+  ImGui::SliderFloat("Radius", &params.radius, 0.1f, 2.0f);
+  ImGui::SliderFloat("Glow Intensity", &params.glowIntensity, 0.0f, 3.0f);
 
   ImGui::SeparatorText("Accretion Disk");
-  ImGui::SliderFloat("Inner Radius", &m_params.diskInnerRadius, 0.5f, 3.0f);
-  ImGui::SliderFloat("Outer Radius", &m_params.diskOuterRadius, 2.0f, 8.0f);
-  ImGui::SliderFloat("Thickness", &m_params.diskThickness, 0.05f, 1.0f);
-  ImGui::SliderFloat("Speed", &m_params.diskSpeed, 0.0f, 10.0f);
-  ImGui::ColorEdit3("Hot Color", &m_params.diskColor1[0]);
-  ImGui::ColorEdit3("Cool Color", &m_params.diskColor2[0]);
+  ImGui::SliderFloat("Inner Radius", &params.diskInnerRadius, 0.5f, 3.0f);
+  ImGui::SliderFloat("Outer Radius", &params.diskOuterRadius, 2.0f, 8.0f);
+  ImGui::SliderFloat("Thickness", &params.diskThickness, 0.05f, 1.0f);
+  ImGui::SliderFloat("Speed", &params.diskSpeed, 0.0f, 10.0f);
+  ImGui::ColorEdit3("Hot Color", &params.diskColor1[0]);
+  ImGui::ColorEdit3("Cool Color", &params.diskColor2[0]);
 
   ImGui::SeparatorText("Camera");
-  ImGui::SliderFloat("Distance", &m_params.cameraDistance, 5.0f, 30.0f);
-  ImGui::SliderFloat("Angle", &m_params.cameraAngle, -1.57f, 1.57f);
+  ImGui::SliderFloat("Distance", &camParams.distance, 5.0f, 30.0f);
+  ImGui::SliderFloat("Angle", &camParams.angle, -1.57f, 1.57f);
   ImGui::Text("(Drag to orbit, Scroll to zoom)");
 
   ImGui::SeparatorText("Bloom");
@@ -255,16 +224,16 @@ void Application::renderUI() {
   if (ImGui::Button("Export Image (1920x1080)", ImVec2(-1, 40))) {
     Shader compositeShader("assets/shaders/vertex.glsl",
                            "assets/shaders/bloom_composite.glsl");
-    m_screenshotExporter.capture(1920, 1080, *m_blackHoleShader,
-                                 compositeShader, m_params, m_diskPhase,
+    m_screenshotExporter.capture(1920, 1080, *m_blackHoleRenderer.getShader(),
+                                 compositeShader, params, camParams, m_blackHoleRenderer.getDiskPhase(),
                                  m_bloomParams.exposure);
     glViewport(0, 0, m_width, m_height);
   }
   if (ImGui::Button("Export Image (4K)", ImVec2(-1, 40))) {
     Shader compositeShader("assets/shaders/vertex.glsl",
                            "assets/shaders/bloom_composite.glsl");
-    m_screenshotExporter.capture(3840, 2160, *m_blackHoleShader,
-                                 compositeShader, m_params, m_diskPhase,
+    m_screenshotExporter.capture(3840, 2160, *m_blackHoleRenderer.getShader(),
+                                 compositeShader, params, camParams, m_blackHoleRenderer.getDiskPhase(),
                                  m_bloomParams.exposure);
     glViewport(0, 0, m_width, m_height);
   }
@@ -279,33 +248,14 @@ void Application::renderScene() {
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
 
-  m_blackHoleShader->use();
-  m_blackHoleShader->setVec2("u_Resolution", glm::vec2(m_width, m_height));
-  m_blackHoleShader->setFloat("u_Time", (float)glfwGetTime());
-  m_blackHoleShader->setFloat("u_BlackHoleRadius", m_params.radius);
-  m_blackHoleShader->setFloat("u_DiskInnerRadius", m_params.diskInnerRadius);
-  m_blackHoleShader->setFloat("u_DiskOuterRadius", m_params.diskOuterRadius);
-  m_blackHoleShader->setFloat("u_DiskThickness", m_params.diskThickness);
-  m_blackHoleShader->setVec3("u_DiskColor1", m_params.diskColor1);
-  m_blackHoleShader->setVec3("u_DiskColor2", m_params.diskColor2);
-  m_blackHoleShader->setFloat("u_GlowIntensity", m_params.glowIntensity);
-  m_blackHoleShader->setFloat("u_DiskPhase", m_diskPhase);
-  m_blackHoleShader->setFloat("u_CameraDistance", m_params.cameraDistance);
-  m_blackHoleShader->setFloat("u_CameraAngle", m_params.cameraAngle);
-
-  m_noiseTexture.bind(2);
-  m_blackHoleShader->setInt("u_NoiseTexture", 2);
-
-  m_starfieldCubemap.bind(3);
-  m_blackHoleShader->setInt("u_StarfieldCubemap", 3);
-
-  glBindVertexArray(m_quadVAO);
-  glDrawArrays(GL_TRIANGLES, 0, 6);
+  // Render the black hole
+  m_blackHoleRenderer.render((float)glfwGetTime(), m_width, m_height);
 
   // Apply post-processing
+  unsigned int quadVAO = m_blackHoleRenderer.getQuadVAO();
   if (m_bloomParams.enabled) {
-    m_bloomRenderer.applyBloom(m_bloomParams, m_quadVAO);
+    m_bloomRenderer.applyBloom(m_bloomParams, quadVAO);
   } else {
-    m_bloomRenderer.renderWithoutBloom(m_bloomParams, m_quadVAO);
+    m_bloomRenderer.renderWithoutBloom(m_bloomParams, quadVAO);
   }
 }

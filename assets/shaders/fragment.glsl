@@ -240,6 +240,22 @@ void main() {
     float prevY = pos.y;
     
     float photonSphere = u_BlackHoleRadius * 1.5;
+
+    // Bounding Sphere Check
+    // If the ray doesn't pass near the black hole system, skip the expensive integration.
+    float boundRadius = max(u_DiskOuterRadius * 1.5, u_BlackHoleRadius * 15.0);
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - boundRadius * boundRadius;
+    float h = b*b - c;
+    
+    // If ray misses the bounding sphere and we are outside it
+    if (h < 0.0 && c > 0.0) {
+       // Just render stars with no lensing (or minimal)
+       vec3 stars = getStars(rd, 0.0, initialDir, ro);
+       FragColor = vec4(stars, 0.0);
+       return;
+    }
+
     
     for (int i = 0; i < MAX_STEPS; i++) {
         float distToCenter = length(pos);

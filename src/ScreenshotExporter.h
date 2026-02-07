@@ -8,7 +8,7 @@
 // Forward declaration
 class Shader;
 
-struct BlackHoleParams;
+#include "BlackHoleRenderer.h"
 
 class ScreenshotExporter {
 public:
@@ -23,6 +23,7 @@ public:
   // Returns the filename on success, empty string on failure.
   std::string capture(int width, int height, Shader &sceneShader,
                       Shader &compositeShader, const BlackHoleParams &params,
+                      const CameraParams &camParams,
                       float diskPhase, float exposure);
 
 private:
